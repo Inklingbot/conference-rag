@@ -3,6 +3,11 @@ import {
   requireAuthenticatedUser,
 } from "../_shared/auth.ts";
 import { corsHeaders } from "../_shared/cors.ts";
+import {
+  createEmbeddingCacheKey,
+  getCachedEmbedding,
+  setCachedEmbedding,
+} from "../_shared/embedding-cache.ts";
 
 const OPENAI_EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings";
 const EMBEDDING_MODEL = "text-embedding-3-small";
@@ -44,6 +49,20 @@ Deno.serve(async (request: Request) => {
       );
     }
 
+    const normalizedQuestion = question.normalize("NFKC").trim().replace(
+      /\s+/g,
+      " ",
+    );
+    const cacheKey = await createEmbeddingCacheKey(
+      EMBEDDING_MODEL,
+      normalizedQuestion,
+    );
+    const cachedEmbedding = await getCachedEmbedding(cacheKey);
+
+    if (cachedEmbedding) {
+      return jsonResponse({ embedding: cachedEmbedding });
+    }
+
     const openAiApiKey = Deno.env.get("OPENAI_API_KEY");
     if (!openAiApiKey) {
       console.error("OPENAI_API_KEY is not configured");
@@ -58,7 +77,7 @@ Deno.serve(async (request: Request) => {
       },
       body: JSON.stringify({
         model: EMBEDDING_MODEL,
-        input: question.trim(),
+        input: normalizedQuestion,
       }),
     });
 
@@ -79,6 +98,8 @@ Deno.serve(async (request: Request) => {
       console.error("OpenAI returned an invalid embeddings response");
       return jsonResponse({ error: "Failed to generate embedding" }, 502);
     }
+
+    await setCachedEmbedding(cacheKey, EMBEDDING_MODEL, embedding);
 
     return jsonResponse({ embedding });
   } catch (error) {
